@@ -1,0 +1,762 @@
+---
+title: "Final Project"
+author: "Yuxi Jiang"
+date: "03/05/2023"
+output:
+  html_document:
+    df_print: paged
+    number_sections: yes
+---
+```{r setup, warning=FALSE, message=FALSE, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+***
+
+# Abstract 
+
+In this project, I will first process the data and create summary tables and plots to look into the underlying structure and features of the dataset. Then, I will compute an appropriate measure to represent the neural activities inside the mouse brain and construct a mixed-effects model to study the relationship between the neural activity and the two stimuli(left and right). Then, I will test the interaction effect between the left and right stimulus and the random effect of each session. Next, I will use various diagnostic plots and tests to see if the model assumptions hold true. In addition, I will use an alternative measure as a response variable and repeat the above steps, then compare the results. Lastly, I will implement a logistic regression model on the response variable `feedback` using `contrast_left`, `contrast_right` and `mean_firingrate` as predictors, then use model selection technique to find the optimal model and interpret the model performance using sensitivity and specificity as metrics. 
+
+$~$
+
+# Introduction
+
+A well-known fact from previous research is that the perceptual decision making process often results from neuronal activities occurring in multiple brain regions. However, the past research typically only focused on individual brain regions instead of studying the neural activity as a whole. In this study, Steinmetz and other researchers recorded the brain-wide neuronal activity using Neuralpixels while mice are performing the task.
+
+My primary questions of interest in this project are as follows. First, how do neurons in the visual cortex respond to the left and right visual stimulus? Second, how to predict the feedback outcome using neural spikes and presence of stimulus? To investigate these two questions, I will be primarily focusing on the neural spikes in the visual cortex in a time interval from the onset of stimuli to 0.4 second after. And from the 39 sessions of experiments that were conducted on 10 mice, I will only concentrate on 5 sessions and two mice(Cori and Frossman). There are 5 variables in the dataset. `Feedback_type` is a binary indicator that represents the type of outcome variable, 1 for success and -1 for failure. `contrast_left` and `contrast_right` each represent the contrast of the left and right stimulus. `Time` is the center of the time bins, and `spks` represents the number of neural spikes in the visual cortex that occurs in time bins, as defined in the variable ‘time’.
+
+One of the key findings of this study is the distribution of the neuronal correlates in a mouse brain during the decision-making process while facing a visual stimulus. Not only does this study provide a holistic way to understand the neural activities in action selection, It also sets the foundation for future research to continue exploring the mechanism of how neural correlates follow a certain organizational principle in response to different tasks/stimulus. 
+
+
+
+$~$
+
+# Background 
+
+The data used in this project is from 5 of the 39 sessions in the original study and from two mice(Cori and Frossman).  Each session contains 214 trials and each trial contains 39 timestamps.
+
+The experiment in each trial can be summarized in a few steps. First, the mouse was placed in front of three computer screens with at least 11 cm distance. A visual stimulus will present randomly on either left or right side of the screen, with different contrast levels —— $0, 0.25, 0.5, 1$. More specifically, 0 means there is no stimulus and 1 is the highest contrast level of stimulus. These contrast levels of left and right stimulus were recorded in the variables `contrast_left` and `contrast_right`. The mouse will then have to use their forepaw to turn the wheel as a response to the visual stimuli. Depending on the correctness of their decision outcome, either a reward or penalty will be given to the mouse accordingly. The variable `feedback_type` denotes the outcome which equals 1 if there is a success and $-1$ if there is a failure. In this process, the neural activity in the mouse’s visual cortex was recorded using Neural pixels in the form of spike trains. The variable `spks` denotes the number of neural spikes in each time spin defined in another variable `time`.  
+
+There are also other researches that cover similar topics as in this study. For example, in the study of  ‘Cortical ensembles selective for context’ by Jordan P.Hamm et al., they also used Two-Photon Calcium Imaging to record the neural activity inside the visual cortex of mice while presenting different visual stimuli to them. The result indicates that different contexts of visual stimulus(redundant or deviant) will trigger different types of neural response. Also, in the study of ‘Ventral Pallidum GABA Neurons Mediate Motivation Underlying Risky Choice’ by Mitchell R. Farrell et al., the researchers specifically study the neural activity in the ventral pallidum region of the brain while rats are making high-risk decisions to earn the reward while mitigating the risk. As a result, they found that activities of GABA neurons have a positive correlation with the motivation of the decision.
+
+
+$~$
+
+# Descriptive analysis 
+
+First, I read in the data of all 5 sessions and printed out the name of the mouse being studied as well as the date of the experiment.
+```{r}
+session=list()
+for(i in 1:5){
+  session[[i]]=readRDS(paste('~/Desktop/session',i,'.rds',sep=''))
+  print(session[[i]]$mouse_name)
+  print(session[[i]]$date_exp)
+  
+}
+```
+
+As shown above, two mice 'Cori' and 'Forssmann' were the experimental subjects in the study. The experiments were conducted on the following dates: `2016-12-14`, `2016-12-17`, ` 2016-12-18`, `2017-11-01` and `2017-11-02`.
+
+$~$
+
+Next, I checked the missing values in the datasets.
+```{r}
+# missing values
+for (i in 1:5){
+  cat('There are ',toString(sum(is.na(session[[i]]))), ' missing value in Session', toString(i), '\n')
+}
+```
+
+No missing value is detected in the dataset.
+
+$~$
+
+Then, I investigated in the special features of the data.
+```{r,warning=FALSE,message=FALSE}
+library(knitr)
+library(kableExtra)
+
+n.trials = c(dim(session[[1]]$contrast_left)[1],
+             dim(session[[2]]$contrast_left)[1],
+             dim(session[[3]]$contrast_left)[1],
+             dim(session[[4]]$contrast_left)[1],
+             dim(session[[5]]$contrast_left)[1])
+
+n.neurons = c(dim(session[[1]]$spks[[1]])[1],
+              dim(session[[2]]$spks[[1]])[1],
+              dim(session[[3]]$spks[[1]])[1],
+              dim(session[[4]]$spks[[1]])[1],
+              dim(session[[5]]$spks[[1]])[1])
+
+df_feature <- data.frame(level = c("Session1","Session2","Session3","Session4","Session5"), 
+                 Number_of_trials = linebreak(n.trials),
+                 Number_of_neurons = linebreak(n.neurons))
+
+kable(df_feature, col.names = c("", "Number_of_trials", "Number_of_neurons"), escape = F, caption = "Table 1: Number of trials and neurons in each session") %>%
+  kable_styling(latex_options = "hold_position")
+
+```
+
+From Table 1, it's easy to see that number of trials and neurons differ in each session. More specifically, session 5 has the most experiment trials and session 1 has the least experiment trials. Session 2 includes the most neurons while session 5 includes the least neurons.
+
+
+$~$
+
+Then, I constructed the summary tables and barplots to illustrate the proportion of contrast of left and right stimuli across all trials in all 5 sessions. 
+
+```{r,warning=FALSE,message=FALSE}
+library(knitr)
+library(kableExtra)
+header.true <- function(df) {
+  names(df) <- as.character(unlist(df[1,]))
+  df[-1,]
+}
+df_left_c <- data.frame(level = c("0", "0.25","0.5","1"), 
+                 Session1 = linebreak(c(as.numeric(prop.table(table(session[[1]]$contrast_left))))),
+                 Session2 = linebreak(c(as.numeric(prop.table(table(session[[2]]$contrast_left))))),
+                 Session3 = linebreak(c(as.numeric(prop.table(table(session[[3]]$contrast_left))))),
+                 Session4 = linebreak(c(as.numeric(prop.table(table(session[[4]]$contrast_left))))),
+                 Session5 = linebreak(c(as.numeric(prop.table(table(session[[5]]$contrast_left))))))
+
+df_left_c <- header.true(t(df_left_c))
+colnames(df_left_c) <- c("0","0.25","0.5","1")
+
+df_right_c <- data.frame(level = c("0", "0.25","0.5","1"), 
+                 Session1 = linebreak(c(as.numeric(prop.table(table(session[[1]]$contrast_right))))),
+                 Session2 = linebreak(c(as.numeric(prop.table(table(session[[2]]$contrast_right))))),
+                 Session3 = linebreak(c(as.numeric(prop.table(table(session[[3]]$contrast_right))))),
+                 Session4 = linebreak(c(as.numeric(prop.table(table(session[[4]]$contrast_right))))),
+                 Session5 = linebreak(c(as.numeric(prop.table(table(session[[5]]$contrast_right)))))) 
+df_right_c <- header.true(t(df_right_c))
+colnames(df_right_c) <- c("0","0.25","0.5","1")
+
+kable(df_left_c, col.names = c("0","0.25","0.5","1"), escape = F, caption = "Table 2: Percentage of contrast of left stimuli in each session") %>%
+  kable_styling(latex_options = "hold_position")
+
+kable(df_right_c, col.names = c("0","0.25","0.5","1"), escape = F, caption = "Table 3: Percentage of contrast of right stimuli in each session") %>%
+  kable_styling(latex_options = "hold_position")
+```
+
+```{r}
+par(mfrow = c(2, 2))
+barplot(prop.table(table(session[[1]]$contrast_left)), main = 'Contrast of left stimuli in Session 1')
+barplot(prop.table(table(session[[1]]$contrast_right)), main = 'Contrast of right stimuli in Session 1')
+
+barplot(prop.table(table(session[[2]]$contrast_left)), main = 'Contrast of left stimuli in Session 2')
+barplot(prop.table(table(session[[2]]$contrast_right)), main = 'Contrast of right stimuli in Session 2')
+
+barplot(prop.table(table(session[[3]]$contrast_left)), main = 'Contrast of left stimuli in Session 3')
+barplot(prop.table(table(session[[3]]$contrast_right)), main = 'Contrast of right stimuli in Session 3')
+
+barplot(prop.table(table(session[[4]]$contrast_left)), main = 'Contrast of left stimuli in Session 4')
+barplot(prop.table(table(session[[4]]$contrast_right)), main = 'Contrast of right stimuli in Session 4')
+
+barplot(prop.table(table(session[[5]]$contrast_left)), main = 'Contrast of left stimuli in Session 5')
+barplot(prop.table(table(session[[5]]$contrast_right)), main = 'Contrast of right stimuli in Session 5')
+```
+
+
+From both table 2 & 3 as well as the barplots, I observe that in all of the trials from the 5 sessions,
+the stimuli is mostly likely to be absent(0 contrast). 
+
+$~$
+
+Next, I examined the distribution of feedback types across all trials in all 5 sessions again using summary table and barplots.
+```{r,warning=FALSE,message=FALSE}
+library(knitr)
+library(kableExtra)
+df_f <- data.frame(level = c("-1","1"), 
+                 Session1 = linebreak(c(as.numeric(prop.table(table(session[[1]]$feedback_type))))),
+                 Session2 = linebreak(c(as.numeric(prop.table(table(session[[2]]$feedback_type))))),
+                 Session3 = linebreak(c(as.numeric(prop.table(table(session[[3]]$feedback_type))))),
+                 Session4 = linebreak(c(as.numeric(prop.table(table(session[[4]]$feedback_type))))),
+                 Session5 = linebreak(c(as.numeric(prop.table(table(session[[5]]$feedback_type))))))
+df_f <- header.true(t(df_f))
+
+kable(df_f, col.names = c("-1", "1"), escape = F, caption = "Table 4: Percentage of feedback type in each session") %>%
+  kable_styling(latex_options = "hold_position")
+
+```
+
+```{r}
+par(mfrow = c(2, 3))
+barplot(prop.table(table(session[[1]]$feedback_type)), main = 'Feedback type in Session 1')
+barplot(prop.table(table(session[[2]]$feedback_type)), main = 'Feedback type in Session 2')
+barplot(prop.table(table(session[[3]]$feedback_type)), main = 'Feedback type in Session 3')
+barplot(prop.table(table(session[[4]]$feedback_type)), main = 'Feedback type in Session 4')
+barplot(prop.table(table(session[[5]]$feedback_type)), main = 'Feedback type in Session 5')
+```
+
+
+From table 4 and the barplots, it's obvious that for the most of the times, mice made correct decisions in selecting the side where the stimuli appears(around 66% of the times). 
+
+$~$
+
+
+
+Next, I calculated the mean firing rate(average number of spikes in each second across all neurons and the [0,0.4] time span in each session) as the response variable to construct the model. There are two reasons why I chose this measure: 
+$~$
+
+1. This method is simple, straightforward and also easy to calculate. 
+$~$
+
+2. From Table 1, I observe that there are different number of neurons in each session. Thus, I first divided the total firing rate in each trial by the number of neurons in each session to offset the impact of this difference.
+$~$
+
+3. Also, this measure is reflective of the overall firing rate across all the neurons in a given time frame without much influence from the outliers or noises.
+
+```{r}
+mean_firingrate = function(ID) {
+  t = 0.4
+  n.trials=length(session[[ID]]$spks)
+  n.neurons=dim(session[[ID]]$spks[[1]])[1]
+  firingrate=numeric(n.trials)
+  for(i in 1:n.trials){
+    firingrate[i]=sum(session[[ID]]$spks[[i]])/n.neurons/t
+  }
+  return(firingrate)
+}
+```
+
+```{r}
+mean_firingrate1 = mean_firingrate(1)
+mean_firingrate2 = mean_firingrate(2)
+mean_firingrate3 = mean_firingrate(3)
+mean_firingrate4 = mean_firingrate(4)
+mean_firingrate5 = mean_firingrate(5)
+
+mean_firingrate_all = c(mean_firingrate1,
+               mean_firingrate2,
+               mean_firingrate3,
+               mean_firingrate4,
+               mean_firingrate5)
+```
+
+
+Then, I constructed histograms to visualize the distribution of the `mean_firingrate` in each session.
+```{r}
+par(mfrow = c(2, 3))
+hist(mean_firingrate1)
+hist(mean_firingrate2)
+hist(mean_firingrate3)
+hist(mean_firingrate4)
+hist(mean_firingrate5)
+```
+
+
+From the histograms, it's easy to see that the mean firing rate in each session has a relatively right-skewed distribution. However, the mean firing rate peaks around $3～4$ in session 1, 2 and 3 while it peaks between $1～2$ in session 4 and 5.
+
+$~$
+
+# Inferential analysis 
+
+In this study, I used a mixed-effect model and define it as follows: 
+$~$
+
+for $i=1,2,3,4,\ j= 1,2,3,4,\ k = 1,2,3,$
+$$Y_{ijk} = \mu_{...} + \alpha_{i} + \beta_{j} +\eta_{k} + (\alpha\beta)_{ij}+\epsilon_{ijk}$$, where the index $i$ and $j$ represents left and right contrast, $k$ represents the random effect for each session.
+$~$
+
+**Parameters**: 
+$~$
+
+$Y_{ijk}:$ mean firing rate associated with the $i^{th}$ contrast level of left stimuli, $j^{th}$  contrast level of right stimuli and $k^{th}$ session. 
+$~$
+
+$\mu_{...}:$ overall mean firing rate in the population regardless of contrast level of left/right stimuli and session number. 
+$~$
+
+$\alpha_i:$ the main effect of the $i^{th}$ contrast level of left stimuli
+$~$
+
+$\beta_j:$ the main effect of the $j^{th}$ contrast level of right stimuli
+$~$
+
+$\eta_k:$ the random effect of the $k^{th}$ session
+$~$
+
+$(\alpha\beta)_{ij}:$ the interaction effect of the $i^{th}$ contrast level of left stimuli and $j^{th}$ contrast level of right stimuli
+
+$\epsilon_{ijkl}$: the random errors that are associated with the $i^{th}$ contrast level of left stimuli, $j^{th}$  contrast level of right stimuli and $k^{th}$ session. It capture unexplained effects on the outcome.
+$~$
+
+**Constraints**: $(i)\ \alpha_i$~$N(0,\sigma_a^2)$, $(ii)\ \beta_j$~$N(0,\sigma_\beta^2)$, 
+ $(iii)\ (\alpha\beta)_{ij}$~$N(0,\sigma_{\alpha\beta}^2)$, $(iv)\ \eta_k$~$N(0,\sigma_\eta^2)$  $(v)\ \{\epsilon_{ijk}\}$~$N(0,\sigma^2)$, 
+ $(vi)$ all random variables are mutually independent.
+$~$
+
+$~$
+
+To see if it's necessary to include the interaction term and random effects, I constructed an anova table of three models.  Model 1(`lm1`) only includes two fixed effect factors `contrast_left` and `contrast_right`. Model 2(`lm2`) includes the random effect term but drops the interaction term. Model 3(`lm3`) includes both the interaction term between the variables `contrast_left` and `contrast_right` as well as the random effect term. Also, I set the significance level $\alpha=0.05$.
+
+```{r}
+contrast_left_all = c(session[[1]]$contrast_left,
+                      session[[2]]$contrast_left,
+                      session[[3]]$contrast_left,
+                      session[[4]]$contrast_left,
+                      session[[5]]$contrast_left)
+
+contrast_right_all = c(session[[1]]$contrast_right,
+                      session[[2]]$contrast_right,
+                      session[[3]]$contrast_right,
+                      session[[4]]$contrast_right,
+                      session[[5]]$contrast_right)
+```
+
+```{r}
+session_ind = c(rep(1,length(session[[1]]$contrast_left)),
+                rep(2,length(session[[2]]$contrast_left)),
+                rep(3,length(session[[3]]$contrast_left)),
+                rep(4,length(session[[4]]$contrast_left)),
+                rep(5,length(session[[5]]$contrast_left)))
+df1 = data.frame(
+  mean_firingrate = mean_firingrate_all,
+  contrast_left = as.factor(contrast_left_all),
+  contrast_right = as.factor(contrast_right_all),
+  session_ind = as.factor(session_ind)
+)
+```
+
+```{r,warning=FALSE,message=FALSE}
+library(lmerTest)
+lm1 = lm(mean_firingrate_all~contrast_left+contrast_right, data=df1)
+lm2 =lmer(mean_firingrate_all~contrast_left+contrast_right+(1|session_ind), data=df1)
+lm3=lmer(mean_firingrate_all~contrast_left*contrast_right+(1|session_ind),data=df1)
+anova(lm3,lm2,lm1)
+```
+
+
+$H_0$: There is no interaction effect between left and right stimulus. ($(\alpha\beta)_{ij}=0$)
+$~$
+
+$H_a$: There is an interaction effect between left and right stimulus. ($(\alpha\beta)_{ij}\neq0$)
+$~$
+
+The p-value associated with Model 2(`lm2`) is smaller than $2*10^{16}$,  which is both smaller than the significance level $\alpha=0.05$.
+$~$
+
+Thus, I have enough evidence to reject $H_0$ and conclude that the interaction term between two contrast levels is significant in the model and should not be dropped.
+
+$~$
+
+Similarly, I then tested the significance of the random effect term. 
+$~$
+
+$H_0$: There is no random effect from different sessions. ($\eta_k=0$)
+$~$
+
+$H_a$: There is an random effect from different sessions. ($\eta_k\neq0$)
+$~$
+
+The p-value associated with Model 3(`lm3`) is $0.04112$, which is smaller than the significance level $\alpha=0.05$.
+$~$
+
+Thus, I have enough evidence to reject $H_0$ and conclude that the random effect term is significant in the model and should not be dropped.
+
+$~$
+
+And so I still choose the original model.
+
+
+**Assumptions**:
+
+$~$
+1. All the errors are independent and identically distributed random variables that follow
+a normal distribution with mean $0$ and variance $\sigma^2$.
+
+$~$
+2. The observations in this study are all independent to each other, and follow a normal distribution with constant variance.
+
+$~$
+
+# Sensitivity analysis 
+
+Next, I constructed diagnostic plots to test if the model assumptions hold.
+```{r,warning=FALSE,message=FALSE}
+library(redres)
+plot_redres(lm3, type='std_cond')
+qqnorm(resid(lm3))
+qqline(resid(lm3))
+```
+
+From the Residuals vs. Fitted plot, I observe again that the variance of the errors are approximately constant despite some fluctuations, which indicates a possible violation of constant variance assumption. From the Normal Q-Q plot, almost all the data points follow an straight line, but some deviations of the data points from the straight line are still observed,  which might indicate that the normality assumption is violated. These are just some initial findings. To get a more accurate result, I will conduct a few diagnostic tests.
+
+$~$
+
+First, I conducted the Shapiro-Wilk test to test normality.
+```{r}
+shapiro.test(residuals(lm3))
+```
+
+
+From the result, since p-value($1.105*10^{-9}$) is much smaller than significance level $\alpha=0.05$. thus I conclude that the normality assumption is violated.
+
+$~$
+
+To test the homogeneity of variances, I conducted Bartlett's test and Fligner-Killeen test.
+```{r,warning=FALSE,message=FALSE}
+library(lme4)
+library(car)
+bartlett.test(resid(lm3) ~ session_ind, data = df1)
+fligner.test(resid(lm3) ~ session_ind, data = df1)
+```
+
+
+From the result of Levene's test and Fligner-Killeen test, it's easy to see that both p-values($2.2*10^{-16}$) are smaller than $0.05$. Therefore, I conclude that the variance across different groups are homogeneous at significance level $0.05$. 
+
+$~$
+
+## Alternative method
+
+I then used another way to compute the response variable. To calculate this measure, I first summed up the total number of sparks in one trial from all the neurons, then divide the result by the number of neurons to get an average. However, this time I didn't average the value over the time interval $0.4$ for a few reasons:
+$~$
+
+1. There might be fluctuations of the number of spikes over time. Taking average over the $[0-0.4]$ time frame might eliminate these information.
+$~$
+
+2. Taking average number of spikes over the $[0-0.4]$ time frame lies on the assumption that the spikes occur at a constant rate. In reality, this might not be the case.
+$~$
+
+## Inferential analysis
+Therefore, I decide to take this alternative approach to see if it will produce any significantly different result. And the model that I will use this part is defined as:
+$~$
+
+for $i=1,2,3,4,\ j= 1,2,3,4,\ k = 1,2,3,$
+$$Y_{ijk} = \mu_{...} + \alpha_{i} + \beta_{j} +\eta_{k} + (\alpha\beta)_{ij}+\epsilon_{ijk}$$, where the index $i$ and $j$ represents left and right contrast, $k$ represents the random effect for each session.
+$~$
+
+**Parameters**: 
+$~$
+
+$Y_{ijk}:$ mean firing rate associated with the $i^{th}$ contrast level of left stimuli, $j^{th}$  contrast level of right stimuli and $k^{th}$ session(without averaging out over time). 
+$~$
+
+$\mu_{...}:$ overall mean firing rate in the population regardless of contrast level of left/right stimuli and session number. 
+$~$
+
+$\alpha_i:$ the main effect of the $i^{th}$ contrast level of left stimuli
+$~$
+
+$\beta_j:$ the main effect of the $j^{th}$ contrast level of right stimuli
+$~$
+
+$\eta_k:$ the random effect of the $k^{th}$ session
+$~$
+
+$(\alpha\beta)_{ij}:$ the interaction effect of the $i^{th}$ contrast level of left stimuli and $j^{th}$ contrast level of right stimuli
+
+$\epsilon_{ijkl}$: the random errors that are associated with the $i^{th}$ contrast level of left stimuli, $j^{th}$  contrast level of right stimuli and $k^{th}$ session. It capture unexplained effects on the outcome.
+$~$
+
+**Constraints**: $(i)\ \alpha_i$~$N(0,\sigma_a^2)$, $(ii)\ \beta_j$~$N(0,\sigma_\beta^2)$, 
+ $(iii)\ (\alpha\beta)_{ij}$~$N(0,\sigma_{\alpha\beta}^2)$, $(iv)\ \eta_k$~$N(0,\sigma_\eta^2)$  $(v)\ \{\epsilon_{ijk}\}$~$N(0,\sigma^2)$, 
+ $(vi)$ all random variables are mutually independent.
+$~$
+
+
+```{r}
+mean_firingrate2 = function(ID) {
+  n.trials=length(session[[ID]]$spks)
+  n.neurons=dim(session[[ID]]$spks[[1]])[1]
+  firingrate=numeric(n.trials)
+  for(i in 1:n.trials){
+    firingrate[i]=sum(session[[ID]]$spks[[i]])/n.neurons
+  }
+  return(firingrate)
+}
+```
+
+```{r}
+mean_firingrate2_1 = mean_firingrate2(1)
+mean_firingrate2_2 = mean_firingrate2(2)
+mean_firingrate2_3 = mean_firingrate2(3)
+mean_firingrate2_4 = mean_firingrate2(4)
+mean_firingrate2_5 = mean_firingrate2(5)
+
+mean_firingrate2_all = c(mean_firingrate2_1,
+               mean_firingrate2_2,
+               mean_firingrate2_3,
+               mean_firingrate2_4,
+               mean_firingrate2_5)
+
+df2 = data.frame(
+  mean_firingrate2_all = mean_firingrate2_all,
+  contrast_left = as.factor(contrast_left_all),
+  contrast_right = as.factor(contrast_right_all),
+  session_ind = as.factor(session_ind)
+)
+```
+
+
+$~$
+
+Again, To test if the interaction term and random effect are necessary to be in the model, I constructed an ANOVA table of three models. Model 1(`lm4`) only includes two fixed effect factors `contrast_left` and `contrast_right`. Model 2(`lm5`) includes the random effect term but drops the interaction term. Model 3(`lm6`) includes both the interaction term between the variables `contrast_left` and `contrast_right` as well as the random effect term. Also, I set the significance level $\alpha=0.05$.
+```{r,warning=FALSE,message=FALSE}
+library(lmerTest)
+lm4 = lm(mean_firingrate2_all~contrast_left+contrast_right, data=df2)
+lm5 = lmer(mean_firingrate2_all~contrast_left+contrast_right+(1|session_ind),data=df2)
+lm6 = lmer(mean_firingrate2_all~contrast_left*contrast_right+(1|session_ind), data=df2)
+anova(lm6, lm5, lm4)
+```
+
+
+$H_0$: There is no interaction effect between left and right stimulus. ($(\alpha\beta)_{ij}=0$)
+$~$
+
+$H_a$: There is an interaction effect between left and right stimulus. ($(\alpha\beta)_{ij}\neq0$)
+$~$
+
+The p-value associated with Model 2(`lm5`) is smaller than $2*10^{16}$,  which is both smaller than the significance level $\alpha=0.05$.
+$~$
+
+Thus, I have enough evidence to reject $H_0$ and conclude that the interaction term between two contrast levels is significant in the model and should not be dropped.
+
+$~$
+
+Similarly, I then tested the significance of the random effect term. 
+$~$
+
+$H_0$: There is no random effect from different sessions. ($\eta_k=0$)
+$~$
+
+$H_a$: There is an random effect from different sessions. ($\eta_k\neq0$)
+$~$
+
+The p-value associated with Model 3(`lm6`) is $0.041$, which is smaller than the significance level $\alpha=0.05$.
+$~$
+
+Thus, I have enough evidence to reject $H_0$ and conclude that the random effect term is significant in the model and should not be dropped.
+
+$~$
+
+And so I still choose the original model this time.
+
+$~$
+
+## Sensitivity analysis
+
+Next, I constructed diagnostic plots to test if the model assumptions hold.
+```{r,warning=FALSE,message=FALSE}
+library(redres)
+plot_redres(lm6, type='std_cond')
+qqnorm(resid(lm6))
+qqline(resid(lm6))
+```
+
+$~$
+
+From the Residuals vs. Fitted plot, I observe again that the variance of the errors are approximately constant, but there are still some degree of fluctuations, which indicates a possible violation of constant variance assumption. From the Normal Q-Q plot, almost all the data points follow an straight line, but there are still some deviations of the data points from the straight line,  which might indicate that the normality assumption is violated. These are just some initial findings. To get a more accurate result, I will conduct a few diagnostic tests.
+
+$~$
+
+First, I conducted the Shapiro-Wilk test to test normality.
+```{r}
+shapiro.test(residuals(lm6))
+```
+
+
+I got the same p-value($1.105*10^{-9}$) as above when I used the `mean_firingrate` as the response variable. The p-value is still much smaller than significance level $\alpha=0.05$. thus I will conclude that the normality assumption is violated.
+
+$~$
+
+To test the homogeneity of variances, I conducted Bartlett's test and Fligner-Killeen test.
+```{r,warning=FALSE,message=FALSE}
+library(lme4)
+library(car)
+bartlett.test(resid(lm6) ~ session_ind, data = df2)
+fligner.test(resid(lm6) ~ session_ind, data = df2)
+```
+
+The result of Levene's test and Fligner-Killeen test doesn't change from above, it's easy to see that both p-values($2.2*10^{-16}$) are smaller than $0.05$. Therefore, I conclude that the variance across different groups are homogeneous at significance level $0.05$. 
+
+
+
+
+***
+
+# Predictive Modeling
+
+In this section, the goal is to predict the outcome variable `feedback` of each trial using the neural activities and stimuli. Since the outcome variable `feedback` is binary and only takes the values $1$ and $-1$, I decide to implement a logistic regression model using the variables `contrast_left`, `contrast_right` and `mean_firingrate`, assuming that there exists an interaction effect among three predictor variables. The model is defined as follows: 
+$$logit(P(feedback\ type = success ))=\beta_1X_{contrast\_left=0.25}+\beta_2X_{contrast\_left=0.5}+\beta_3X_{contrast\_left=1}+\\ \beta_4X_{contrast\_right=0.25}+\beta_5X_{contrast\_right=0.5}+\beta_6X_{contrast\_right=1}+\beta_{7}X_{mean\_firingrate}+\\ \beta_8X_{contrast\_left=0.25}X_{contrast\_right=0.25}+\beta_9X_{contrast\_left=0.5}X_{contrast\_right=0.25}+\beta_{10}X_{contrast\_left=1}X_{contrast\_right=0.25}+\\ \beta_{11}X_{contrast\_left=0.25}X_{contrast\_right=0.5}+\beta_{12}X_{contrast\_left=0.5}X_{contrast\_right=0.5}+\beta_{13}X_{contrast\_left=1}X_{contrast\_right=0.5}+\\
+\beta_{14}X_{contrast\_left=0.25}X_{contrast\_right=1}+\beta_{15}X_{contrast\_left=0.5}X_{contrast\_right=1}+\beta_{16}X_{contrast\_left=1}X_{contrast\_right=1}+\\
+\beta_{17}X_{contrast\_left=0.25}X_{mean\_firingrate}+\beta_{18}X_{contrast\_left=0.5}X_{mean\_firingrate}+\beta_{19}X_{contrast\_left=1}X_{mean\_firingrate}+\\
+\beta_{20}X_{contrast\_right=0.25}X_{mean\_firingrate}+\beta_{21}X_{contrast\_right=0.5}X_{mean\_firingrate}+\beta_{22}X_{contrast\_right=1}X_{mean\_firingrate}+\\
+\beta_{23}X_{contrast\_left=0.25}X_{contrast\_right=0.25}X_{mean\_firingrate}+ 
+\beta_{24}X_{contrast\_left=0.5}X_{contrast\_right=0.25}X_{mean\_firingrate}+\\
+\beta_{25}X_{contrast\_left=1}X_{contrast\_right=0.25}X_{mean\_firingrate}+
+\beta_{26}X_{contrast\_left=0.25}X_{contrast\_right=0.5}X_{mean\_firingrate}+\\
+\beta_{27}X_{contrast\_left=0.5}X_{contrast\_right=0.5}X_{mean\_firingrate}+
+\beta_{28}X_{contrast\_left=1}X_{contrast\_right=0.5}X_{mean\_firingrate}+\\
+\beta_{29}X_{contrast\_left=0.25}X_{contrast\_right=1}X_{mean\_firingrate}+
+\beta_{30}X_{contrast\_left=0.5}X_{contrast\_right=1}X_{mean\_firingrate}+\\
+\beta_{31}X_{contrast\_left=1}X_{contrast\_right=1}X_{mean\_firingrate}$$,
+$~$
+
+where I define $logit(a)=log(a/(1-a))$. In this section, I extracted the first 100 rows of the data of all 5 sessions as the testing set and make the rest as the training set. Below is the summary of the model's fitted result.
+```{r}
+feedback_type_all <- c(session[[1]]$feedback_type,
+                  session[[2]]$feedback_type,
+                  session[[3]]$feedback_type,
+                  session[[4]]$feedback_type,
+                  session[[5]]$feedback_type)
+feedback_type_all[feedback_type_all == -1] <- 0
+df1['feedback'] = as.factor(feedback_type_all)
+train = df1[-(1:100), , drop = FALSE]
+test = head(df1,100)
+lm1.train <-glm(feedback~contrast_left*contrast_right*mean_firingrate, data = train, family="binomial")
+summary(lm1.train)
+```
+
+$~$
+
+Then, I conducted a stepwise model selection using $BIC$ as criterion, since $BIC$ will often result in a simpler model as desired.
+
+$~$
+```{r,warning=FALSE,message=FALSE}
+library(MASS)
+final_model = stepAIC(lm1.train, direction="both", trace=FALSE, criterion = "BIC")
+summary(final_model)
+```
+
+As the result shows, it appears that the original full model is the most optimal one according to the $BIC$ criterion.
+
+$~$
+
+To evaluate the model's performance, I first constructed a contingency table. 
+
+```{r}
+threshold = 0.5
+predicted_prob = predict(final_model, newdata = test,type='response')
+predicted_values = ifelse(predicted_prob>threshold,1,0)
+actual_values = test$feedback
+conf_matrix = table(predicted_values,actual_values)
+conf_matrix[rev(rownames(conf_matrix)),rev(colnames(conf_matrix))]
+```
+
+$~$
+
+Then, I calculated the sensitivity and specificity of the model to assess the accuracy of the classification of two feedback types. Both of these two values are very common measures to evaluate the performance of the model fitting. 
+$~$
+
+Sensitivity is calculated by $\frac{number\ of \ true\ positives}{number\ of \ true\ positives\ +\ number\ of \ false\ negatives}$. In this study, sensitivity measures the proportion of mice that actually give the `success` feedback are predicted to have `success` feedback.
+$~$
+
+Specificity is calculated by $\frac{number\ of \ true\ negatives}{number\ of \ true\ negatives\ +\ number\ of \ false\ positives}$.  In this study, specificity measures the proportion of mice that actually give the `failure` feedback are predicted to have `failure` feedback.
+
+```{r}
+list( 'Sensitivity' = sum(predicted_values == 1 & actual_values ==1)/sum(actual_values == 1),
+      'Specificity' = sum(predicted_values == 0 & actual_values ==0)/sum(actual_values == 0))
+```
+
+From the result, we can see that the sensitivity is relatively high ($0.9594595$), which means that the majority of the mice that actually give a `success` feedback in the reality are predicted to give a `success` feedback. By contrast, the specificity is relatively low ($0.1538462$), which means that most of the mice that actually give a `failure` feedback in the reality are predicted to give a `success` feedback (high False Positive).
+
+$~$
+
+Then, I constructed a $ROC$ curve and calculated the 'area under the curve' value. $ROC$ curve is a plot that helps us to visualize the trade-off between the sensitivity and specificity. And the AUC(area under the curve) value measures the performance of the model, more specifically, to what degree can it distinguish between two different feedback types($0$ and $1$). 
+
+```{r,warning=FALSE,message=FALSE}
+library(pROC)
+final_model.roc<-roc(test$feedback,predicted_prob)
+plot(final_model.roc)
+final_model.roc$auc
+```
+
+$~$
+
+From the plot, I observe that the curve appears to be close to the top left corner. This indicates that the performance of this model is relatively satisfying. And since the AUC value is around $0.7479$, which is $0.25$ higher than $0.5$, I again conclude that the model performance is relatively good.
+
+$~$
+
+As an alternative method, I then tried to find an optimal threshold for the logistic regression model and see if it will boost the model fitting performance. The optimal threshold is chosen so that it's the best cutoff point where the trade-off between sensitivity and specificity reaches a perfect balance. That is, when they intersect with each other.
+
+
+```{r,warning=FALSE,message=FALSE}
+library(ROCR)
+predictions = prediction(predict(final_model, test, type = "response"), actual_values)
+plot(unlist(performance(predictions, "sens")@x.values), unlist(performance(predictions, "sens")@y.values), 
+     type="l", lwd=2, ylab="Sensitivity", xlab="Cutoff")
+par(new=TRUE)
+plot(unlist(performance(predictions, "spec")@x.values), unlist(performance(predictions, "spec")@y.values), 
+     type="l", lwd=2, col='red', ylab="", xlab="")
+mtext("Specificity",side=4, padj=-2, col='red')
+
+sens = cbind(unlist(performance(predictions, "sens")@x.values), unlist(performance(predictions, "sens")@y.values))
+spec = cbind(unlist(performance(predictions, "spec")@x.values), unlist(performance(predictions, "spec")@y.values))
+optimal = sens[which.min(apply(sens, 1, function(x) min(colSums(abs(t(spec) - x))))), 1]
+
+text(optimal,0,paste("optimal threshold=",round(optimal,2)), pos = 4)
+```
+$~$
+
+From the graph, and also through calculation, I got the optimal threshold where sensitivity and specificity are the closet to each other to be $0.68$. Then, I will use this threshold to predict the binary outcome of `feedtype`. Below is the contingency table that I got.
+
+```{r}
+threshold = 0.68
+predicted_prob = predict(final_model, newdata = test,type='response')
+predicted_values = ifelse(predicted_prob>threshold,1,0)
+actual_values = test$feedback
+conf_matrix = table(predicted_values,actual_values)
+conf_matrix[rev(rownames(conf_matrix)),rev(colnames(conf_matrix))]
+```
+
+
+The resulted sensitivity and specificity are as follows:
+```{r}
+list( 'Sensitivity' = sum(predicted_values == 1 & actual_values ==1)/sum(actual_values == 1),
+      'Specificity' = sum(predicted_values == 0 & actual_values ==0)/sum(actual_values == 0))
+```
+
+
+From the result, we can see that the sensitivity is relatively high ($0.6621622$), which means that the majority of the mice that actually give a `success` feedback in the reality are predicted to give a `success` feedback. The specificity is relatively low ($0.6923077$), which means that most of the mice that actually give a `failure` feedback in the reality are also predicted to give a `failure` feedback. Compared to the result obtained using $0.5$ as the threshold, The sensitivity value decreases from $0.9594595$ to $0.6621622$, and specificity increases in a larger magnitude from $0.1538462$ to $0.6923077$. Therefore, I conclude that threshold of $0.68$ does result in a better model performance. 
+
+
+
+
+
+*** 
+
+# Discussion 
+
+In this project, My primary focus was to investigate how neural activity in the visual cortex of the mouse brain is affected by left and right stimuli and how these variables can be used to predict the response of the mouse in each trial. First, I checked the missing values in the dataset and didn’t find any. Then, I constructed summary tables and barplots to gain some insights of the features in each session such as number of trials, number of neurons, proportion of each contrast level of left and right stimuli. The result shows that session 5 includes the most trials but the least neurons. Session 1 has the least trials and session 2 has the most neurons. Also, in most of the trials, the stimulus is absent, and the number of stimuli in contrast levels $0.25, 0.5$ and $1$ are not significantly different from each other. Furthermore, mice seem to select the correct stimuli in most of the trials. 
+
+Next, I computed the mean firing rate as the response variable to construct a mixed-effect model with two contrast levels as fixed effect factors and another random effect associated with different sessions. After that, to test the significance of the interaction term between two fixed effect factors, I created another two reduced models, one without the interaction term and another without the random intercept. Then, I put the three models in an ANOVA table to establish a comparison. The result indicates that the interaction term and the random intercept is indeed significant and should be kept in the model. Then, I constructed a few diagnostic plots and conducted diagnostic tests to check the model assumption. It turns out that the normality assumption is violated but the constant variance assumption still holds. Next, I computed an alternative response variable andI repeated the steps above and got approximately the same results as well.
+
+Lastly, I constructed a logistic regression model with two stimuli and the neural activities as predictor variables to predict the targeted mouse’s feedback type, which takes values ‘1’ for success and ‘-1’ for failure. At first, I assumed that the interaction effect exists among three variables. To efficiently select the most optimal model, I used stepwise model selection technique based on the BIC criteria because it will most likely result in a simpler model. However, the final selected model seems to be the original full model. Then, I extracted the first 100 rows of the dataset as the testing set and used the rest of it as the training set. After that, I implemented my model on the training set and used the $0.5$ threshold to predict the binary outcomes. Furthermore, I constructed a contingency table using the predicted values and actual values, and through calculation, I got a relatively high sensitivity and low specificity. In this study, it means that the mice that gave `success` feedback are most likely to be predicted in the same way. However, the mice that gave `failure` feedback are mostly likely to be predicted to have `success` feedback. Then, I constructed a ROC plot of the specificity and sensitivity and calculated the AUC(area under the curve) value. It turns out that the curve hugs to the top left corner considerably, and so we can say that the model performance is pretty good. The AUC value is calculated to be relatively high ($0.7479$), which again confirms our conclusion. Then, I drew a plot with sensitivity and specificity on the y-axis and cutoff on the x axis to visualize their trend and find the optimal point where the two lines intersect. The optimal point turns out to be at $0.68$, and I implemented this threshold to the original model and repeated the steps above to evaluate the model performance. The result indicates that the sensitivity drops from $0.9594595$ to $0.6621622$, but the specificity increases to a higher degree ($0.1538462$ to $0.6923077$). Therefore, I still conclude that the threshold $0.68$ improves the model performance as compared to using the threshold $0.5$. 
+
+One limitation in this project is that the final selected logistic regression is still too complex, which contains $31$ coefficients. There might be an overfitting issue, and it could also result in an excessively expensive computation. And since this model contains lots of interaction terms, it might create additional difficulties in understanding and interpreting the relationship between variables and the modeling result. Another major limitation in this project is that the normality assumption of the mixed-effects model that I implemented using two different response variables is violated. Therefore, it might impact my estimates of the model coefficients and the fitted results such that they are not entirely accurate and reliable. 
+
+The future research could try out other different measures as the response variable and investigate its relationship with left and right stimulus in different sessions(ex. median firing rate, maximum firing rate, etc) and the goal is to get a better model fit without violating model assumptions. Also, possible direction for the future research is to find a simpler but effective logistic regression model to classify the `feedback` outcome variable so that it’s more applicable and interpretable. Furthermore, future research could also focus on the change of response time of the mice to the visual stimuli over time and see if it will generally take significantly less time for mice to respond to the visual stimuli through learning. 
+
+One of the major findings in this study is that there exists an interaction effect between left and right stimuli and they will act together to influence the neural activity in the visual cortex of the mouse brain. Another major finding is that there is an interaction effect between left stimuli, right stimuli and neural activities inside the mouse brain, and they can be used to predict the outcome. 
+
+The findings of this study have many implications in the real world. For example, knowing how the different stimuli affect the neural activities will help us to gain a better understanding of how the brain normally processes the information from the visual stimuli and responds to it. This might lead to a better treatment for some cognitive or vision disorders. Also, knowing that the different stimulus and neural activities could predict the outcome could help us to better understand the brain function and how these various effects will lead to a final action. This might have a significant impact in the psychology field to understand how different visual stimulus and neural activities would influence certain human behavior. 
+
+
+
+$~$
+
+# Acknowledgement {-}
+
+N/A
+
+$~$
+
+# Reference {-}
+
+[1] Imbens, G., & Rubin, D. (2015). Stratified Randomized Experiments. In Causal Inference for Statistics, Social, and Biomedical Sciences: An Introduction (pp. 187-218). Cambridge: Cambridge University Press. doi:10.1017/CBO9781139025751.010
+
+[2] Meier, L. (n.d.). Chapter 7 split-plot designs: ANOVA and mixed models. Chapter 7 Split-Plot Designs | ANOVA and Mixed Models. Retrieved March 20, 2023, from https://stat.ethz.ch/~meier/teaching/anova/split-plot-designs.html#tab:oats-design 
+
+[3] Deciding threshold for GLM logistic regression model in R. Stack Overflow. (1961, February 1). Retrieved March 20, 2023, from https://stackoverflow.com/questions/23240182/deciding-threshold-for-glm-logistic-regression-model-in-r
+
+
+[4] 13.3 - the two factor mixed models: Stat 503. PennState: Statistics Online Courses. (n.d.). Retrieved March 20, 2023, from https://online.stat.psu.edu/stat503/lesson/13/13.3 
+
+$~$
+
+# Session info {-}
+
+
+```{r}
+sessionInfo()
+```
